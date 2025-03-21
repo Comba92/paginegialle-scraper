@@ -1,5 +1,6 @@
 use std::{collections::HashMap, io::Write};
 
+use clap::Parser;
 use deunicode::deunicode;
 use futures::StreamExt;
 
@@ -14,6 +15,24 @@ struct BusinessEntry {
     name: String,
     address: String,
     phones: String,
+}
+
+#[derive(clap::Parser)]
+#[command(about = "Scrapes PagineGialle businesses data into a csv file. Puntuactions should be replaced with _")]
+struct Cli {
+    region: String,
+    city: String,
+
+    /// if left empty, will scrape for ALL PagineGialle categories (might be very slow)
+    category: Option<String>,
+
+    /// maximum pages to be scraped for each city
+    #[arg(default_value_t = DEFAULT_PAGE_LIMIT)]
+    page_limit: usize,
+
+    /// output filename (without the .csv extension)
+    #[arg(default_value = "output")]
+    output_file: String,
 }
 
 fn extract_data_from_html(element: &scraper::ElementRef, selector: &scraper::Selector) -> String {
@@ -69,19 +88,14 @@ async fn get_all_categories(client: &reqwest::Client) -> Result<Vec<String>, Box
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args();
-
-    if args.len() < 3 {
-        println!("Usage: region city [category] [page-limit] [output-filename]");
-        std::process::exit(0);
-    }
+    let cli = Cli::parse();
 
     // parse command line args
-    let region = args.nth(1).unwrap();
-    let provincia = args.next().unwrap();
-    let category = args.next().unwrap_or_default();
-    let page_limit = args.next().unwrap_or_default().parse().unwrap_or(DEFAULT_PAGE_LIMIT);
-    let output_filename = args.next().unwrap_or(String::from("output"));
+    let region = cli.region;
+    let provincia = cli.city;
+    let category = cli.category.unwrap_or_default();
+    let page_limit = cli.page_limit;
+    let output_filename = cli.output_file;
     let mut output_path = std::path::PathBuf::new();
     output_path.push(output_filename);
     output_path.set_extension("csv");
