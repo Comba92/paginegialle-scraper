@@ -62,28 +62,35 @@ async fn get_all_categories(client: &reqwest::Client) -> Result<Vec<String>, Box
         .send().await?.text().await?;
     let document = scraper::Html::parse_document(&html);
 
-    let cateogriy_selector = scraper::Selector::parse(".categorie__item--show a")?;
-    let subcategory_selector = scraper::Selector::parse(".categorie-macro__box-corr__itm a")?;
-
-    let categories = document.select(&cateogriy_selector)
-        .map(|e| e.attr("href").unwrap_or_default())
-        .filter(|e| !e.is_empty())
-        .collect::<Vec<_>>();
-
-    let mut subcategories = Vec::new();
-
-    // TODO: this is not async
-    for subcategory_url in categories {
-        let html = client.get(subcategory_url).send().await?.text().await?;
-        let document = scraper::Html::parse_document(&html);
-
-        document.select(&subcategory_selector)
+    let category_selector = scraper::Selector::parse(".categorie__item")?;
+    
+    let categories = document.select(&category_selector)
         .map(|e| e.text().collect::<String>().trim().to_string())
         .map(|s| s.to_lowercase().replace(|c: char| c.is_whitespace() || c.is_ascii_punctuation(), "_"))
-        .for_each(|c| subcategories.push(c));
-    }
+        .collect();
 
-    Ok(subcategories)
+    println!("{categories:?}");
+    Ok(categories)
+    
+    // let category_page_selector = scraper::Selector::parse(".categorie__item--show a")?;
+    // let subcategory_selector = scraper::Selector::parse(".categorie-macro__box-corr__itm a")?;
+    // let categories = document.select(&category_page_selector)
+    //     .map(|e| e.attr("href").unwrap_or_default())
+    //     .filter(|e| !e.is_empty())
+    //     .collect::<Vec<_>>();
+
+    // let mut subcategories = Vec::new();
+
+    // // TODO: this is not async
+    // for subcategory_url in categories {
+    //     let html = client.get(subcategory_url).send().await?.text().await?;
+    //     let document = scraper::Html::parse_document(&html);
+
+    //     document.select(&subcategory_selector)
+    //     .map(|e| e.text().collect::<String>().trim().to_string())
+    //     .map(|s| s.to_lowercase().replace(|c: char| c.is_whitespace() || c.is_ascii_punctuation(), "_"))
+    //     .for_each(|c| subcategories.push(c));
+    // }
 }
 
 #[tokio::main]
@@ -120,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
     
     let categories = if category.is_empty() {
-        println!("Nessuna cateogira specificata. Saranno ricercate ditte per TUTTE le categorie (potrebbe impiegare molto tempo).");
+        println!("Nessuna categoria specificata. Saranno ricercate ditte per TUTTE le categorie (potrebbe impiegare molto tempo).");
         get_all_categories(&client).await?
     } else { vec![category] };
     
@@ -141,10 +148,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // https://stackoverflow.com/questions/51044467/how-can-i-perform-parallel-asynchronous-http-get-requests-with-reqwest/51047786#51047786
     let htmls = futures::stream::iter(&urls).enumerate()
     .map(|(i, url)| {
-        if i % (urls.len() / 10) == 0 {
-            print!("\r{}% completato, {i} richieste effetuate", ((i as f32 / urls.len() as f32) * 100.0).round());
-            std::io::stdout().flush().unwrap();
-        }
+        // if i % (urls.len() / 100) == 0 {
+        //     let percentage = ((i as f32 / urls.len() as f32) * 100.0).round();
+        //     print!("\r{percentage:02}% completato, {i} richieste effetuate");
+        //     std::io::stdout().flush().unwrap();
+        // }
+        let percentage = ((i as f32 / urls.len() as f32) * 100.0).round();
+        print!("\r{percentage:>2}% completato, {} richieste effetuate", i+1);
+        std::io::stdout().flush().unwrap();
 
         let client = client.clone();
         async move {
