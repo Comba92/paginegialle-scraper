@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Write};
+use std::{collections::{HashMap, HashSet}, io::Write};
 
 use clap::Parser;
 use deunicode::deunicode;
@@ -10,7 +10,7 @@ const COMUNI_API_URL: &'static str = "https://axqvoqvbfjpaamphztgd.functions.sup
 const DEFAULT_PAGE_LIMIT: usize = 10;
 const DEFAULT_REQUESTS_BATCH: usize = 50;
 
-#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, PartialEq, Eq, Hash, serde::Serialize)]
 struct BusinessEntry {
     name: String,
     address: String,
@@ -69,7 +69,6 @@ async fn get_all_categories(client: &reqwest::Client) -> Result<Vec<String>, Box
         .map(|s| s.to_lowercase().replace(|c: char| c.is_whitespace() || c.is_ascii_punctuation(), "_"))
         .collect();
 
-    println!("{categories:?}");
     Ok(categories)
     
     // let category_page_selector = scraper::Selector::parse(".categorie__item--show a")?;
@@ -213,7 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the upper level sender is not used, it should be dropped so that the receiver knows when there are no more senders
     drop(sender);
 
-    let mut entries = Vec::new();
+    let mut entries = HashSet::new();
     let mut errors = HashMap::new();
 
     // receive data from tasks
@@ -221,7 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match res {
             Ok(entry) => {
                 if !entry.name.is_empty() && !entry.phones.is_empty() {
-                    entries.push(entry);
+                    entries.insert(entry);
                 }
             }
             Err(e) => {
@@ -245,6 +244,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\rScraping finito, salvataggio su file CSV...");
 
+    let mut entries = entries.into_iter().collect::<Vec<_>>();
     entries.sort_by_key(|e| (e.name.to_lowercase(), e.address.to_lowercase()));
     entries.dedup_by(|a, b| a == b);
 
