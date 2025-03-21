@@ -4,8 +4,9 @@ use deunicode::deunicode;
 use futures::StreamExt;
 
 const PAGINEGIALLE_URL: &'static str = "https://www.paginegialle.it";
+const PAGINEGIALLE_CATEGORIE_URL: &'static str = "https://www.paginegialle.it/categorie.htm";
 const COMUNI_API_URL: &'static str = "https://axqvoqvbfjpaamphztgd.functions.supabase.co/comuni/provincia";
-const DEFAULT_PAGE_LIMIT: usize = 20;
+const DEFAULT_PAGE_LIMIT: usize = 10;
 const DEFAULT_REQUESTS_BATCH: usize = 50;
 
 #[derive(Debug, PartialEq, Eq, serde::Serialize)]
@@ -37,12 +38,41 @@ fn extract_data_from_html(element: &scraper::ElementRef, selector: &scraper::Sel
     tokens.join(" ")
 }
 
+async fn get_all_categories(client: &reqwest::Client) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let html = client.get(PAGINEGIALLE_CATEGORIE_URL)
+        .send().await?.text().await?;
+    let document = scraper::Html::parse_document(&html);
+
+    let cateogriy_selector = scraper::Selector::parse(".categorie__item--show a")?;
+    let subcategory_selector = scraper::Selector::parse(".categorie-macro__box-corr__itm a")?;
+
+    let categories = document.select(&cateogriy_selector)
+        .map(|e| e.attr("href").unwrap_or_default())
+        .filter(|e| !e.is_empty())
+        .collect::<Vec<_>>();
+
+    let mut subcategories = Vec::new();
+
+    // TODO: this is not async
+    for subcategory_url in categories {
+        let html = client.get(subcategory_url).send().await?.text().await?;
+        let document = scraper::Html::parse_document(&html);
+
+        document.select(&subcategory_selector)
+        .map(|e| e.text().collect::<String>().trim().to_string())
+        .map(|s| s.to_lowercase().replace(|c: char| c.is_whitespace() || c.is_ascii_punctuation(), "_"))
+        .for_each(|c| subcategories.push(c));
+    }
+
+    Ok(subcategories)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args();
 
-    if args.len() < 4 {
-        print!("Usage: region city category [page-limit] [output-filename]");
+    if args.len() < 3 {
+        println!("Usage: region city [category] [page-limit] [output-filename]");
         std::process::exit(0);
     }
 
@@ -55,7 +85,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut output_path = std::path::PathBuf::new();
     output_path.push(output_filename);
     output_path.set_extension("csv");
-
 
     // fetch comuni list from api
     let comuni_url = format!("{COMUNI_API_URL}/{provincia}?format=csv&onlyname=true");
@@ -72,28 +101,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .collect();
 
     println!("Comuni da ricercare:\n{comuni:?}\n\nLimite pagine: {page_limit}");
+
+    // build http fetching tasks
+    let client = reqwest::Client::new();
+    
+    let categories = if category.is_empty() {
+        println!("Nessuna cateogira specificata. Saranno ricercate ditte per TUTTE le categorie (potrebbe impiegare molto tempo).");
+        get_all_categories(&client).await?
+    } else { vec![category] };
     
 
     // build paginegialle urls to scrape
     let mut urls = Vec::new();
-    for comune in &comuni {
-        for i in 0..page_limit {
-            let url = format!("{PAGINEGIALLE_URL}/{region}/{comune}/{category}/p-{i}.html");
-            urls.push(url);
+    for category in categories {
+        for comune in &comuni {
+            for i in 0..page_limit {
+                let url = format!("{PAGINEGIALLE_URL}/{region}/{comune}/{category}/p-{i}.html");
+                urls.push(url);
+            }
         }
     }
     
     println!("Richieste da effettuare: {}\n", urls.len());
-    
-
-    // build http fetching tasks
-    let client = reqwest::Client::new();
 
     // https://stackoverflow.com/questions/51044467/how-can-i-perform-parallel-asynchronous-http-get-requests-with-reqwest/51047786#51047786
     let htmls = futures::stream::iter(&urls).enumerate()
     .map(|(i, url)| {
         if i % (urls.len() / 10) == 0 {
-            print!("\r{}% completato", ((i as f32 / urls.len() as f32) * 100.0).round());
+            print!("\r{}% completato, {i} richieste effetuate", ((i as f32 / urls.len() as f32) * 100.0).round());
             std::io::stdout().flush().unwrap();
         }
 
@@ -113,14 +148,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     let (sender, receiver)  = std::sync::mpsc::channel();
 
-
     // scrape data from html text
     htmls.for_each(|response: Result<_, reqwest::Error>| async {
         match response {
             Ok((html, url)) => {
                 let document = scraper::Html::parse_document(&html);
                 
-                let mut elements = document.select(&entries_selector).peekable();
+                let mut elements = document
+                    .select(&entries_selector)
+                    .peekable();
+
                 if elements.peek().is_none() {
                     let comune = url.split('/').rev().nth(2).unwrap_or_default();
                     sender.clone().send(Err(comune.to_string())).unwrap();
