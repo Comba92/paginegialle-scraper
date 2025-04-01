@@ -26,13 +26,13 @@ struct Cli {
     /// if left empty, will scrape for ALL PagineGialle categories (might be very slow)
     category: Option<String>,
 
-    /// maximum pages to be scraped for each city
-    #[arg(default_value_t = DEFAULT_PAGE_LIMIT)]
-    page_limit: usize,
-
     /// output filename (without the .csv extension)
     #[arg(default_value = "output")]
     output_file: String,
+
+    /// maximum pages to be scraped for each city
+    #[arg(default_value_t = DEFAULT_PAGE_LIMIT)]
+    page_limit: usize,
 }
 
 fn extract_data_from_html(element: &scraper::ElementRef, selector: &scraper::Selector) -> String {
