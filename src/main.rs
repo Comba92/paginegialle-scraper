@@ -147,7 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     
-    println!("Url generati: {urls:?}");
+    // println!("Url generati: {urls:?}");
     println!("Richieste da effettuare: {}\n", urls.len());
 
     // https://stackoverflow.com/questions/51044467/how-can-i-perform-parallel-asynchronous-http-get-requests-with-reqwest/51047786#51047786
