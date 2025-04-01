@@ -110,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let comuni_url = format!("{COMUNI_API_URL}/{provincia}?format=csv&onlyname=true");
     let comuni_csv = reqwest::get(comuni_url).await?.text().await?;
     
-    let comuni: Vec<String> = csv::Reader::from_reader(comuni_csv.as_bytes())
+    let mut comuni: Vec<String> = csv::Reader::from_reader(comuni_csv.as_bytes())
     .into_deserialize()
     .map(|e| e.unwrap_or_default())
     .map(|s: String| s.trim_end_matches(|c: char| c.is_ascii_punctuation())
@@ -119,6 +119,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .to_lowercase())
     .map(|s: String| deunicode(&s))
     .collect();
+
+    if comuni.is_empty() {
+        comuni.push(provincia);
+    }
 
     println!("Comuni da ricercare:\n{comuni:?}\n\nLimite pagine: {page_limit}");
 
@@ -129,7 +133,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Nessuna categoria specificata. Saranno ricercate ditte per TUTTE le categorie (potrebbe impiegare molto tempo).");
         get_all_categories(&client).await?
     } else { vec![category] };
-    
+
+    println!("{categories:?}");
 
     // build paginegialle urls to scrape
     let mut urls = Vec::new();
@@ -142,6 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     
+    println!("Url generati: {urls:?}");
     println!("Richieste da effettuare: {}\n", urls.len());
 
     // https://stackoverflow.com/questions/51044467/how-can-i-perform-parallel-asynchronous-http-get-requests-with-reqwest/51047786#51047786
