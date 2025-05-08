@@ -173,7 +173,7 @@ async fn generate_urls_with_filter_mode(params: &FilterMode, limit: usize, debug
                 .collect::<Vec<_>>();
 
             comuni.sort_by_key(|c| std::cmp::Reverse(c.popolazione));
-            comuni.drain(comuni.len()/2 + comuni.len()/3..);
+            comuni.drain(comuni.len()/2..);
 
             let comuni = comuni.into_iter()
                 .map(|c| sanitize_comune_str(&c.nome))
@@ -205,18 +205,19 @@ async fn generate_urls_with_filter_mode(params: &FilterMode, limit: usize, debug
         }
     };
     
-    println!("Comuni da ricercare:\n{comuni:?}\n");
-    
     let categories = if let Some(category) = &params.category {
         vec![category.clone()]
     } else {
         println!("Nessuna categoria specificata. Saranno ricercate ditte per TUTTE le categorie seguenti (potrebbe impiegare molto tempo).");
         get_all_categories().await?
     };
-
+    
     if debug {
+        println!("Comuni da ricercare:\n{comuni:?}\n");
         println!("Categorie da ricercare:\n{categories:?}\n");
     }
+
+    println!("Cercando in {} comuni e {} categorie...", comuni.len(), categories.len());
 
     let mut urls = Vec::new();
     for category in categories {
@@ -377,7 +378,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .next()
                     .map(|n| n.attr("href").map(|s| s.to_string()).unwrap_or_default())
                     .map(|s| s.chars()
-                        .skip_while(|c| *c != '+')
+                        .skip_while(|c| !c.is_numeric())
                         .take_while(|c| c.is_numeric())
                         .collect()
                     );
@@ -419,7 +420,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // TODO: fix error reporting
     let not_found = errors.iter()
         .filter(|(_, &val)| val == cli.page_limit)
         .map(|(key, _)| key)
@@ -442,8 +442,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let time_took = std::time::Instant::now() - timer_start;
-    println!("Time took: {time_took:?}");
-    println!("\rScraping finito, salvataggio su file CSV...");
+    println!("\nTempo impiegato: {time_took:?}");
+    println!("Scraping finito, salvataggio su file CSV...");
 
     let mut entries = entries.into_iter().collect::<Vec<_>>();
     entries.sort_by_key(|e| (e.name.to_lowercase(), e.address.to_lowercase()));
