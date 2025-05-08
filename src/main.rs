@@ -76,18 +76,23 @@ struct FilterMode {
     /// region to search businesses in
     region: String,
 
-    /// city to search businesses in
-    /// if left empty, will scrape for ALL cities in the region
+    /// city to search businesses in.
+    /// If left empty, will scrape for ALL cities in the region
     city: Option<String>,
-
-    #[arg(long)]
-    /// if city provided is a province (example: Padova), setting this flag will scrape all cities in the province.
-    /// If city is not a province, this flag does nothing
-    all_cities: bool,
 
     #[arg(short, long)]
     /// business category to search for
     category: Option<String>,
+
+    #[arg(short, long)]
+    /// if city provided is a province (example: Padova), setting this flag will scrape all cities in the province.
+    /// If city is not a region or province, this flag does nothing
+    all_regions_cities: bool,
+
+    #[arg(short, long)]
+    /// halven the cities list if scarping for whole regions or provinces, this will make the process faster (less requests) but will give less result.
+    /// If parsing only for a single city, this flag does nothing
+    big_cities_only: bool,
 }
 
 // TODO: consider caching these (they are static data)
@@ -105,7 +110,6 @@ async fn get_all_categories() -> Result<Vec<String>, Box<dyn std::error::Error>>
         .collect();
 
     Ok(categories)
-    
 
     // THIS GETS ALL CATEGORIES
     // This collects too many pages.
@@ -139,6 +143,38 @@ fn sanitize_comune_str(comune: &str) -> String {
     deunicode(&s)
 }
 
+fn parse_comuni_names_from_csv(comuni_csv: &str, filter_for_big_cities: bool) -> Vec<String> {
+    let comuni_reader = csv::ReaderBuilder::new()
+        .delimiter(b';')
+        .from_reader(comuni_csv.as_bytes());
+    
+    #[derive(serde::Deserialize, Debug, Default)]
+    struct Comune {
+        nome: String,
+        popolazione: usize,
+    }
+
+    if filter_for_big_cities {
+        // we try to filter out cities with fewer inhabitatns, to get fewer requests to make
+
+        let mut comuni = comuni_reader.into_deserialize::<Comune>()
+            .map(|e| e.unwrap_or_default())
+            .collect::<Vec<_>>();
+
+        comuni.sort_by_key(|c| std::cmp::Reverse(c.popolazione));
+        comuni.drain(comuni.len()/2..);
+
+        comuni.into_iter()
+            .map(|c| sanitize_comune_str(&c.nome))
+            .collect()
+    } else {
+        comuni_reader.into_deserialize::<Comune>()
+            .map(|c| c.unwrap_or_default())
+            .map(|c| sanitize_comune_str(&c.nome))
+            .collect::<Vec<_>>()
+    }
+}
+
 async fn generate_urls_with_filter_mode(params: &FilterMode, limit: usize, debug: bool) -> Result<(Vec<String>, Vec<String>), Box<dyn std::error::Error>> {
     /*
         Casi:
@@ -155,53 +191,24 @@ async fn generate_urls_with_filter_mode(params: &FilterMode, limit: usize, debug
             // let comuni_url = format!("{COMUNI_API_URL}/provincia/{city}?format=csv&onlyname=true");
             let comuni_url = format!("{COMUNI_API_URL}/provincia/{city}?format=csv");
             let comuni_csv = reqwest::get(comuni_url).await?.text().await?;
-
-
-            // we try to filter out cities with fewer inhabitatns, to get fewer requests to make
-            #[derive(serde::Deserialize, Debug, Default)]
-            struct Comune {
-                nome: String,
-                popolazione: usize,
-            }
             
-            let mut comuni_de = csv::ReaderBuilder::new()
-                .delimiter(b';')
-                .from_reader(comuni_csv.as_bytes());
+            let comuni = parse_comuni_names_from_csv(&comuni_csv, params.big_cities_only);
 
-            let mut comuni = comuni_de.deserialize::<Comune>()
-                .map(|e| e.unwrap_or_default())
-                .collect::<Vec<_>>();
-
-            comuni.sort_by_key(|c| std::cmp::Reverse(c.popolazione));
-            comuni.drain(comuni.len()/2..);
-
-            let comuni = comuni.into_iter()
-                .map(|c| sanitize_comune_str(&c.nome))
-                .collect::<Vec<_>>();
-
-            if comuni.is_empty() || !params.all_cities {
+            if comuni.is_empty() || !params.all_regions_cities {
                 // ricerca per singola citta
                 vec![city.clone()]
             } else {
-                // ricerca per tutta provincia
-
-                // aggiungo anche la provincia (dovrebbe gia esser)
-                // comuni.push(city.to_string());
+                // ricerca per tutta la provincia
                 comuni
             }
         }
         
         None => {
             // cerca in tutta la regione
-            let comuni_url = format!("{COMUNI_API_URL}/regione/{region}?format=csv&onlyname=true", region = params.region);
-            let comuni_csv = reqwest::get(comuni_url).await?.text().await?;
-            let comuni = csv::Reader::from_reader(comuni_csv.as_bytes())
-                .into_deserialize::<String>()
-                .map(|e| e.unwrap_or_default())
-                .map(|s| sanitize_comune_str(&s))
-                .collect::<Vec<_>>();
 
-            comuni
+            let comuni_url = format!("{COMUNI_API_URL}/regione/{region}?format=csv", region = params.region);
+            let comuni_csv = reqwest::get(comuni_url).await?.text().await?;
+            parse_comuni_names_from_csv(&comuni_csv, params.big_cities_only)
         }
     };
     
