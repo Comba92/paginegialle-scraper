@@ -7,12 +7,7 @@ The parser is fast and parallel; expect a scraping execution time (average of a 
 > [!NOTE]
 > Be aware, if any of the parameters contains space, it should be replaced with underscores.
 ```bash
-paginegialle-scraper region_name province_name busingess_category [pages_scraping_limit] [output_filename]
-```
-Esempio:
-```bash
-paginegialle-scraper lombardia milano ristoranti 20 ristoranti-milano
-paginegialle-scraper lombardia milano agenzie_immobiliari 20 agenzie-milano
+paginegialle-scraper -h
 ```
 
 # Build
