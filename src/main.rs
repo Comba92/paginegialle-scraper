@@ -4,95 +4,22 @@ use clap::Parser;
 use deunicode::deunicode;
 use futures::StreamExt;
 
+mod cli;
+use cli::*;
+
 const PAGINEGIALLE_URL: &'static str = "https://www.paginegialle.it";
 const PAGINEGIALLE_CATEGORIE_URL: &'static str = "https://www.paginegialle.it/categorie.htm";
 const COMUNI_API_URL: &'static str = "https://axqvoqvbfjpaamphztgd.functions.supabase.co/comuni/";
 const DEFAULT_PAGE_LIMIT: usize = 5;
 const DEFAULT_REQUESTS_BATCH: usize = 50;
 
-#[derive(Debug, PartialEq, Eq, Hash, serde::Serialize)]
-struct BusinessEntry {
+#[derive(Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct BusinessEntry {
     name: String,
     address: String,
     phones: String,
     whatsapp: Option<String>,
     contact_url: Option<String>,
-}
-
-#[derive(clap::Parser)]
-#[command(version, about = "Scrapes PagineGialle businesses data into a csv file. Puntuactions should be replaced with _")]
-struct Cli {
-    /// which kind of search to request
-    #[command(subcommand)]
-    mode: CliMode,
-
-    /// output filename (without the .csv extension)
-    #[arg(short, long = "output", default_value = "output")]
-    output_file: String,
-
-    /// maximum pages to be scraped for each query
-    #[arg(short = 'l', long = "limit", default_value_t = DEFAULT_PAGE_LIMIT)]
-    page_limit: usize,
-
-    /// show debugging info
-    #[arg(short, long)]
-    debug: bool,
-}
-
-/*
-    TWO KINDS OF URLS:
-    kind one:
-        https://www.paginegialle.it/<regione>/<citta>/<categoria>.html
-
-        requires: regione, citta, categoria
-        support for whole region
-
-    kind two: 
-        https://www.paginegialle.it/ricerca/<search>/[<citta>]
-        (no .hmtl at end!)
-
-        requires: search, citta 
-*/
-#[derive(clap::Subcommand)]
-enum CliMode {
-    /// Needs a search query, and optionally a city.
-    /// (urls of kind `https://www.paginegialle.it/<regione>/<citta>/<categoria>.html`)
-    Search(SearchMode),
-    /// Needs a region name, and optionally a city and a category.
-    /// (urls of kind `https://www.paginegialle.it/ricerca/<search>/[<citta>]`)
-    Filter(FilterMode),
-}
-
-#[derive(clap::Args)]
-struct SearchMode {
-    /// search query, should be a business category or a business name
-    query: String,
-    /// location to search businesses in (might be city or region)
-    location: Option<String>,
-}
-
-#[derive(clap::Args)]
-struct FilterMode {
-    /// region to search businesses in
-    region: String,
-
-    /// city to search businesses in.
-    /// If left empty, will scrape for ALL cities in the region
-    city: Option<String>,
-
-    #[arg(short, long)]
-    /// business category to search for
-    category: Option<String>,
-
-    #[arg(short, long)]
-    /// if city provided is a province (example: Padova), setting this flag will scrape all cities in the province.
-    /// If city is not a region or province, this flag does nothing
-    all_regions_cities: bool,
-
-    #[arg(short, long)]
-    /// halven the cities list if scarping for whole regions or provinces, this will make the process faster (less requests) but will give less result.
-    /// If parsing only for a single city, this flag does nothing
-    big_cities_only: bool,
 }
 
 // TODO: consider caching these (they are static data)
@@ -280,6 +207,46 @@ fn extract_text_from_html(element: &scraper::ElementRef, selector: &scraper::Sel
     tokens.join(" ")
 }
 
+fn merge_csvs(params: &MergeMode, output: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let folder = std::fs::read_dir(&params.folder_path)?;
+
+    let mut entries = HashSet::new();
+    let mut count = 0;
+    for csv_entry in folder {
+        let csv_entry = csv_entry?;
+        let csv_name = csv_entry.path();
+
+        // skip non csv files
+        if let Some(ext) = csv_name.extension() {
+            if ext != "csv" { continue; }
+        } else { continue; }
+
+        let cvs_data = csv::Reader::from_path(csv_entry.path())?;
+
+        for row in cvs_data.into_deserialize::<BusinessEntry>() {
+            count += 1;
+            entries.insert(row?);
+        }
+    }
+
+    println!("All rows read. Found = {count}, uniques = {}", entries.len());
+
+    let mut entries = Vec::from_iter(entries.into_iter());
+    entries.sort_by_key(|e| (e.name.to_lowercase(), e.address.to_lowercase()));
+    entries.dedup_by(|a, b| a == b);
+
+    let mut csv_writer = csv::WriterBuilder::new()
+        .flexible(false)
+        .from_path(output)?;
+
+    for entry in entries {
+        csv_writer.serialize(entry)?;
+    }
+    csv_writer.flush()?;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -296,6 +263,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         CliMode::Filter(ref params) => {
             generate_urls_with_filter_mode(params, cli.page_limit, cli.debug).await?
+        }
+        CliMode::Merge(ref params) => {
+            return merge_csvs(params, &output_path);
         }
     };
     
@@ -363,6 +333,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let comune = url.split('/').rev().nth(2).unwrap_or_default();
                         sender.clone().send(Err(comune.to_string())).unwrap();
                     }
+
+                    _ => {}
                 }
 
                 return;
@@ -445,11 +417,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("Nessun risultato per le seguenti provincie: {not_found:?}");
                 }
             }
+
+            _ => {}
         }
     }
 
     let time_took = std::time::Instant::now() - timer_start;
-    println!("\nTempo impiegato: {time_took:?}");
+    let minutes_took = time_took.as_secs() as f32 / 60.0;
+    println!("\nTempo impiegato: {time_took:?} ({minutes_took} minuti)");
     println!("Scraping finito, salvataggio su file CSV...");
 
     let mut entries = entries.into_iter().collect::<Vec<_>>();
