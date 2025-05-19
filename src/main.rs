@@ -19,6 +19,7 @@ pub struct BusinessEntry {
     address: String,
     phones: String,
     whatsapp: Option<String>,
+    website: Option<String>,
     contact_url: Option<String>,
 }
 
@@ -307,8 +308,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let business_name_selector = scraper::Selector::parse(".search-itm__rag")?;
     let address_selector = scraper::Selector::parse(".search-itm__adr")?;
     let phone_selector = scraper::Selector::parse(".search-itm__phone")?;
-    let whatsapp_selctor = scraper::Selector::parse("a[data-pag=\"whatsapp\"]")?;
-    let contact_select = scraper::Selector::parse("#contattaci_btn")?;
+    let whatsapp_selector = scraper::Selector::parse("a[data-pag=\"whatsapp\"]")?;
+    let contact_selector = scraper::Selector::parse("#contattaci_btn")?;
+    let website_selector = scraper::Selector::parse(".bttn.bttn--white.bttn--blank.shinystat_ssxl")?;
 
     let (sender, receiver)  = std::sync::mpsc::channel();
 
@@ -353,7 +355,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect::<Vec<_>>()
                     .join(" | ");
 
-                let whatsapp = element.select(&whatsapp_selctor)
+                let whatsapp = element.select(&whatsapp_selector)
                     .next()
                     .map(|n| n.attr("href").map(|s| s.to_string()).unwrap_or_default())
                     .map(|s| s.chars()
@@ -362,11 +364,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .collect()
                     );
 
-                let contact_url = element.select(&contact_select)
+                let contact_url = element.select(&contact_selector)
                     .next()
                     .map(|n| n.attr("href").map(|s| s.to_string()).unwrap_or_default());
 
-                let entry = BusinessEntry { name, phones, address, whatsapp, contact_url };
+                let website = element.select(&website_selector)
+                    .next()
+                    .map(|n| n.attr("href").map(|url| url.to_string()).unwrap_or_default());
+
+                let entry = BusinessEntry { name, phones, address, whatsapp, contact_url, website };
                 sender.clone().send(Ok(entry)).unwrap();
             }
         }

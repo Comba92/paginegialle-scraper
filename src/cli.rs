@@ -64,7 +64,8 @@ pub struct FilterMode {
     pub city: Option<String>,
 
     #[arg(short, long)]
-    /// business category to search for
+    /// business category to search for.
+    /// Full list of categories: https://www.paginegialle.it/categorie.htm
     pub category: Option<String>,
 
     #[arg(short, long)]
